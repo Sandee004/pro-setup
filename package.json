@@ -1,0 +1,21 @@
+{
+  "name": "pro-setup",
+  "version": "1.0.0",
+  "description": "Scaffold projects, manage node dependencies, and set up a Python virtual environment.",
+  "main": "index.js",
+  "bin": {
+    "pro-setup": "./index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "cli",
+    "scaffold",
+    "python",
+    "npm"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
