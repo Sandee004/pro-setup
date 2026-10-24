@@ -273,11 +273,11 @@ const APP_TSX_CONTENT = `export default function App() {
 const isWin = process.platform === "win32";
 const npmBin = isWin ? "npm.cmd" : "npm";
 
-function runCommand(command, args, label, cwd = process.cwd()) {
+function runCommand(commandStr, label, cwd = process.cwd()) {
   return new Promise((resolve, reject) => {
     console.log(`\n--- Starting: ${label} ---`);
 
-    const proc = spawn(command, args, { stdio: "inherit", cwd, shell: true });
+    const proc = spawn(commandStr, { stdio: "inherit", cwd, shell: true });
 
     proc.on("close", (code) => {
       if (code === 0) resolve();
@@ -321,8 +321,7 @@ async function setup() {
     if (!fs.existsSync(venvDir)) {
       const pythonCmd = isWin ? "python" : "python3";
       await runCommand(
-        pythonCmd,
-        ["-m", "venv", ".venv"],
+        `${pythonCmd} -m venv .venv`,
         "Creating Python virtual environment (.venv)",
         rootDir,
       );
@@ -343,34 +342,24 @@ async function setup() {
       ? path.join(venvDir, "Scripts", "pip.exe")
       : path.join(venvDir, "bin", "pip");
 
+    const reqPath = path.join(backendDir, "requirements.txt");
     await runCommand(
-      venvPip,
-      ["install", "-r", path.join(backendDir, "requirements.txt")],
+      `"${venvPip}" install -r "${reqPath}"`,
       "Installing Python packages into .venv",
       rootDir,
     );
 
-    // Step 5: Scaffold React + TS Frontend (Direct shell execution, no prompts)
+    // Step 5: Scaffold React + TS Frontend
     const frontendDir = path.join(rootDir, "frontend");
     if (!fs.existsSync(frontendDir)) {
       await runCommand(
-        npmBin,
-        [
-          "create",
-          "vite@latest",
-          "frontend",
-          "--",
-          "--template",
-          "react-ts",
-          "--no-immediate",
-        ],
+        `${npmBin} create vite@latest frontend -- --template react-ts --no-immediate`,
         "Scaffolding React (TS) project via Vite",
         rootDir,
       );
 
       await runCommand(
-        npmBin,
-        ["install"],
+        `${npmBin} install`,
         "Installing base frontend dependencies",
         frontendDir,
       );
@@ -378,15 +367,13 @@ async function setup() {
 
     // Step 6: Install frontend dependencies
     await runCommand(
-      npmBin,
-      ["install", "react-router-dom", "lucide-react"],
+      `${npmBin} install react-router-dom lucide-react`,
       "Installing frontend runtime dependencies",
       frontendDir,
     );
 
     await runCommand(
-      npmBin,
-      ["install", "tailwindcss", "@tailwindcss/vite"],
+      `${npmBin} install tailwindcss @tailwindcss/vite`,
       "Installing Tailwind v4 Vite plugin",
       frontendDir,
     );
@@ -394,23 +381,18 @@ async function setup() {
     // Step 7: Overwrite configs, App.tsx, index.css & delete App.css
     console.log("\n--- Configuring Frontend Structure & Tailwind Plugin ---");
 
+    const srcDir = path.join(frontendDir, "src");
+    ensureDir(srcDir);
+
     fs.writeFileSync(
       path.join(frontendDir, "vite.config.ts"),
       VITE_CONFIG_CONTENT,
       "utf8",
     );
-    fs.writeFileSync(
-      path.join(frontendDir, "src", "index.css"),
-      INDEX_CSS_CONTENT,
-      "utf8",
-    );
-    fs.writeFileSync(
-      path.join(frontendDir, "src", "App.tsx"),
-      APP_TSX_CONTENT,
-      "utf8",
-    );
+    fs.writeFileSync(path.join(srcDir, "index.css"), INDEX_CSS_CONTENT, "utf8");
+    fs.writeFileSync(path.join(srcDir, "App.tsx"), APP_TSX_CONTENT, "utf8");
 
-    const appCssPath = path.join(frontendDir, "src", "App.css");
+    const appCssPath = path.join(srcDir, "App.css");
     if (fs.existsSync(appCssPath)) {
       fs.unlinkSync(appCssPath);
       console.log("Removed: src/App.css");
