@@ -5,7 +5,14 @@ const fs = require("fs");
 const path = require("path");
 
 // ==========================================
-// 1. CONFIGURATION & STRUCTURE
+// 1. CLI FLAGS
+// ==========================================
+
+const args = process.argv.slice(2);
+const withAuth = args.includes("-auth") || args.includes("--auth");
+
+// ==========================================
+// 2. CONFIGURATION & CODE TEMPLATES
 // ==========================================
 
 const GITIGNORE_CONTENT = `.venv
@@ -16,6 +23,7 @@ __pycache__/
 *.py[cod]
 node_modules/
 dist/
+.vscode/
 `;
 
 const CONFIG_PY_CONTENT = `import os
@@ -91,7 +99,7 @@ from fastapi.staticfiles import StaticFiles
 from config import DIST_DIR, build_frontend
 from database import AsyncSessionLocal, Base, engine
 import models
-
+${withAuth ? "from routers import auth\n" : ""}
 load_dotenv()
 
 # Build frontend automatically if outdated and not in production deploy override
@@ -108,7 +116,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="",
+    title="API",
     description="",
     version="1.0.0",
     docs_url="/docs",
@@ -136,7 +144,7 @@ app.add_middleware(
 )
 
 # Mount API Routers
-# app.include_router(auth.router)
+${withAuth ? 'app.include_router(auth.router, prefix="/auth", tags=["auth"])' : "# app.include_router(auth.router)"}
 
 
 @app.get("/health", tags=["system"])
@@ -226,24 +234,233 @@ async def get_db():
         yield session
 `;
 
+const MODELS_CONTENT = withAuth
+  ? `import uuid
+from sqlalchemy import Column, String
+from database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    password = Column(String, nullable=False)
+`
+  : "";
+
+const SCHEMAS_CONTENT = withAuth
+  ? `from pydantic import BaseModel, EmailStr
+
+
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: EmailStr
+
+    class Config:
+        from_attributes = True
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+`
+  : "";
+
+const UTILS_CONTENT = `import os
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from argon2 import PasswordHasher
+from argon2.exceptions import VerificationError, VerifyMismatchError
+import jwt
+
+from database import get_db
+from models import User
+
+ph = PasswordHasher()
+security = HTTPBearer(
+    scheme_name="JWTBearer",
+    description="Enter your JWT access token",
+    auto_error=False,
+)
+
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", os.getenv("JWT_SECRET", "pinghook-secret-key-change-in-production-2026"))
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_DAYS = 30
+
+
+def hash_password(password: str) -> str:
+    return ph.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        return ph.verify(hashed_password, plain_password)
+    except (VerifyMismatchError, VerificationError):
+        return False
+
+
+def create_access_token(user_id: str, expires_delta: Optional[timedelta] = None) -> str:
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
+    payload = {
+        "sub": user_id,
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+async def get_current_user(
+    auth: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if not auth or not auth.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials were not provided",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = auth.credentials
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_raw: Optional[str] = payload.get("sub")
+        if not user_id_raw:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+            )
+        user_id = str(user_id_raw)
+    except jwt.PyJWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+    return user
+`;
+
+const AUTH_ROUTER_CONTENT = `from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from database import get_db
+from models import User
+from schemas import UserCreate, UserLogin, UserResponse, TokenResponse
+from utils import hash_password, verify_password, create_access_token, get_current_user
+
+router = APIRouter()
+
+
+@router.post("/signup", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
+    existing_user_query = await db.execute(
+        select(User).where((User.email == user_data.email) | (User.username == user_data.username))
+    )
+    if existing_user_query.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User with this email or username already exists",
+        )
+
+    new_user = User(
+        username=user_data.username,
+        email=user_data.email,
+        password=hash_password(user_data.password),
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    token = create_access_token(user_id=new_user.id)
+    return TokenResponse(access_token=token, user=new_user)
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
+    query = await db.execute(select(User).where(User.email == credentials.email))
+    user = query.scalars().first()
+
+    if not user or not verify_password(credentials.password, user.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    token = create_access_token(user_id=user.id)
+    return TokenResponse(access_token=token, user=user)
+
+
+@router.get("/profile", response_model=UserResponse)
+async def get_profile(current_user: User = Depends(get_current_user)):
+    return current_user
+`;
+
+// Dependencies
 const PYTHON_PACKAGES = [
   "uvicorn",
   "fastapi",
   "python-dotenv",
-  "sqlalchemy",
+  "sqlalchemy[asyncio]",
+  "greenlet",
   "aiosqlite",
 ];
 
+if (withAuth) {
+  PYTHON_PACKAGES.push("argon2-cffi", "pyjwt", "pydantic[email]");
+}
+
 const REQUIREMENTS_CONTENT = `${PYTHON_PACKAGES.join("\n")}\n`;
+
+const VSCODE_SETTINGS_CONTENT = JSON.stringify(
+  {
+    "python.analysis.extraPaths": ["./backend"],
+  },
+  null,
+  2,
+);
 
 const BACKEND_FILES = [
   { name: "config.py", content: CONFIG_PY_CONTENT },
   { name: "main.py", content: MAIN_PY_CONTENT },
-  { name: "models.py", content: "" },
+  { name: "models.py", content: MODELS_CONTENT },
   { name: "database.py", content: DATABASE_CONTENT },
   { name: "requirements.txt", content: REQUIREMENTS_CONTENT },
-  { name: "schemas.py", content: "" },
+  { name: "schemas.py", content: SCHEMAS_CONTENT },
 ];
+
+if (withAuth) {
+  BACKEND_FILES.push({ name: "utils.py", content: UTILS_CONTENT });
+}
 
 const VITE_CONFIG_CONTENT = `import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
@@ -257,17 +474,93 @@ export default defineConfig({
 
 const INDEX_CSS_CONTENT = `@import "tailwindcss";\n`;
 
-const APP_TSX_CONTENT = `export default function App() {
+const APP_TSX_CONTENT = `import { useState, useEffect } from "react";
+import { CheckCircle2, Server, Globe, ExternalLink } from "lucide-react";
+
+export default function App() {
+  const [backendStatus, setBackendStatus] = useState<"checking" | "connected" | "error">("checking");
+
+  useEffect(() => {
+    fetch("http://localhost:8000/health")
+      .then((res) => {
+        if (res.ok) setBackendStatus("connected");
+        else setBackendStatus("error");
+      })
+      .catch(() => setBackendStatus("error"));
+  }, []);
+
   return (
-    <>
-      <p>Hi</p>
-    </>
+    <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-6 selection:bg-neutral-800">
+      <div className="w-full max-w-md border border-neutral-800 bg-neutral-900/60 backdrop-blur-xl p-8 rounded-2xl shadow-2xl">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="h-10 w-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight text-white">Project Startup Complete</h1>
+            <p className="text-xs text-neutral-400">Vite, Tailwind v4 & FastAPI are live</p>
+          </div>
+        </div>
+
+        <div className="space-y-3 mb-6">
+          <div className="flex items-center justify-between p-3.5 rounded-xl bg-neutral-950/60 border border-neutral-800/80">
+            <div className="flex items-center gap-2.5 text-sm">
+              <Globe className="w-4 h-4 text-neutral-400" />
+              <span className="font-medium text-neutral-200">Frontend Client</span>
+            </div>
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Port 5173
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between p-3.5 rounded-xl bg-neutral-950/60 border border-neutral-800/80">
+            <div className="flex items-center gap-2.5 text-sm">
+              <Server className="w-4 h-4 text-neutral-400" />
+              <span className="font-medium text-neutral-200">FastAPI Engine</span>
+            </div>
+            <span
+              className={\`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border \${
+                backendStatus === "connected"
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                  : backendStatus === "checking"
+                  ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                  : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+              }\`}
+            >
+              <span
+                className={\`h-1.5 w-1.5 rounded-full \${
+                  backendStatus === "connected"
+                    ? "bg-emerald-400 animate-pulse"
+                    : backendStatus === "checking"
+                    ? "bg-amber-400"
+                    : "bg-rose-400"
+                }\`}
+              />
+              {backendStatus === "connected" ? "Online" : backendStatus === "checking" ? "Connecting..." : "Offline"}
+            </span>
+          </div>
+        </div>
+
+        <div className="pt-2 flex flex-col gap-2">
+          <a
+            href="http://localhost:8000/docs"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-center gap-2 w-full py-2.5 px-4 rounded-xl bg-neutral-100 hover:bg-white text-neutral-900 font-medium text-sm transition-colors"
+          >
+            Open Swagger API Docs
+            <ExternalLink className="w-3.5 h-3.5 text-neutral-600" />
+          </a>
+        </div>
+      </div>
+    </div>
   );
 }
 `;
 
 // ==========================================
-// 2. RUNTIME HELPERS
+// 3. RUNTIME HELPERS
 // ==========================================
 
 const isWin = process.platform === "win32";
@@ -305,16 +598,71 @@ function ensureFile(filePath, content = "") {
 }
 
 // ==========================================
-// 3. EXECUTION WORKFLOW
+// 4. SERVER RUNNER
+// ==========================================
+
+function startDevelopmentServers(rootDir, backendDir, frontendDir, venvDir) {
+  console.log("\n========================================================");
+  console.log("🚀 Starting both Backend and Frontend Servers...");
+  console.log(
+    "   • Backend:  http://localhost:8000 (Docs: http://localhost:8000/docs)",
+  );
+  console.log("   • Frontend: http://localhost:5173");
+  console.log("   Press Ctrl + C at any time to stop both servers.");
+  console.log("========================================================\n");
+
+  const venvPython = isWin
+    ? path.join(venvDir, "Scripts", "python.exe")
+    : path.join(venvDir, "bin", "python");
+
+  // 1. Start FastAPI / Uvicorn
+  const backendProc = spawn(
+    `"${venvPython}" -m uvicorn main:app --reload --port 8000`,
+    { stdio: "inherit", cwd: backendDir, shell: true },
+  );
+
+  // 2. Start Vite Dev Server
+  const frontendProc = spawn(`${npmBin} run dev`, {
+    stdio: "inherit",
+    cwd: frontendDir,
+    shell: true,
+  });
+
+  // Clean shutdown handler
+  function shutdown() {
+    console.log("\nShutting down backend and frontend servers...");
+    try {
+      backendProc.kill();
+      frontendProc.kill();
+    } catch (_) {}
+    process.exit(0);
+  }
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+// ==========================================
+// 5. EXECUTION WORKFLOW
 // ==========================================
 
 async function setup() {
   const rootDir = process.cwd();
 
   try {
-    // Step 1: Root .gitignore
+    if (withAuth) {
+      console.log(
+        "\n[Auth Mode Enabled]: Setting up User model, schemas, utils, and auth router.",
+      );
+    }
+
+    // Step 1: Root .gitignore & .vscode configuration
     console.log("\n--- Creating Root Files ---");
     ensureFile(path.join(rootDir, ".gitignore"), GITIGNORE_CONTENT);
+
+    const vscodeDir = path.join(rootDir, ".vscode");
+    ensureDir(vscodeDir);
+    ensureFile(path.join(vscodeDir, "settings.json"), VSCODE_SETTINGS_CONTENT);
 
     // Step 2: Setup Python virtual environment (.venv)
     const venvDir = path.join(rootDir, ".venv");
@@ -335,6 +683,10 @@ async function setup() {
 
     for (const file of BACKEND_FILES) {
       ensureFile(path.join(backendDir, file.name), file.content);
+    }
+
+    if (withAuth) {
+      ensureFile(path.join(routersDir, "auth.py"), AUTH_ROUTER_CONTENT);
     }
 
     // Step 4: Install Python packages into .venv
@@ -399,8 +751,11 @@ async function setup() {
     }
 
     console.log(
-      "\nSetup completed successfully! Python dependencies installed in .venv, backend ready, and frontend configured with Tailwind v4, Lucide, and React Router.",
+      `\nSetup completed successfully! Python dependencies installed in .venv, backend ready${withAuth ? " (with Auth endpoints)" : ""}, and frontend configured.`,
     );
+
+    // Step 8: Start both servers and keep terminal active
+    startDevelopmentServers(rootDir, backendDir, frontendDir, venvDir);
   } catch (err) {
     console.error(`\nSetup failed: ${err.message}`);
     process.exit(1);
