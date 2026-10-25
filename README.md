@@ -1,42 +1,46 @@
-# `pro-setup`
+# pro-setup
 
-An opinionated, zero-configuration CLI developer tool built to automate the orchestration, scaffolding, and immediate execution of modern full-stack environments.
+[![Node.js](https://img.shields.io/badge/Node.js-20+-68a063?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18+-61dafb?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-v4-38bdf8?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Expo](https://img.shields.io/badge/Expo-SDK--51+-000020?style=flat-square&logo=expo&logoColor=white)](https://expo.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-Rather than simply cloning boilerplates or creating isolated directories, `pro-setup` acts as an automated environment orchestrator: provision isolated Python virtual environments, configure asynchronous database sessions, build modern client templates (Web SPA or Mobile Native), inject modular authentication infrastructure on demand, and concurrently run multi-runtime development servers with integrated signal traps.
+**Scaffold and launch a FastAPI + React (or Expo) full-stack project with a single command.**
+
+`pro-setup` creates an isolated Python virtual environment, an async FastAPI backend on SQLAlchemy 2.0 and `aiosqlite`, and a Vite + React + TypeScript + Tailwind v4 client, or an Expo React Native app with `-app`. Add `-auth` for Argon2id password hashing, JWT sessions and a protected profile route. When scaffolding finishes, it starts both dev servers together and shuts them down cleanly on exit.
 
 ---
 
 ## ⚡ Quickstart
 
-Run directly from any empty project directory without cloning or installing globally:
+Run it from any empty project directory. There is nothing to clone or install globally.
 
 ```bash
-# Web Client (Vite + React-TS + Tailwind v4) + FastAPI (Async SQLAlchemy)
+# Web: Vite + React + TypeScript + Tailwind v4, with a FastAPI (async SQLAlchemy) backend
 npx github:Sandee004/pro-setup
-```
 
-### Modular Flags
-
-```bash
-# With production-ready Auth (Argon2id + JWT + Pydantic + User Model)
+# Add authentication (Argon2id + JWT + Pydantic + User model)
 npx github:Sandee004/pro-setup -auth
 
-# Mobile Target (Expo React Native) instead of Vite Web
+# Mobile: Expo React Native instead of the Vite web client
 npx github:Sandee004/pro-setup -app
 
-# Full Mobile + Auth Stack
+# Mobile with authentication
 npx github:Sandee004/pro-setup -app -auth
 ```
 
-> **Requirements:** Node.js 18+, Python 3.10+, and npm.
+> **Requirements:** Node.js 20+, Python 3.10+, and npm.
 
 ---
 
-## 🎯 Architectural Overview
+## 🎯 Why this exists
 
-Standard development setup requires tedious, error-prone manual labor: creating isolated virtual environments, aligning asynchronous database drivers, handling CORS policies, structuring modular routers, setting up modern bundlers, and juggling multiple terminal panes.
+The first hour of a full-stack project is the same every time: create a virtual environment, pick an async database driver, set up CORS, split the routers, configure a bundler, wire in Tailwind, and keep two terminals running. `pro-setup` does all of it in one step, so you start on the product instead of the plumbing.
 
-`pro-setup` automates these pain points into an end-to-end atomic process:
+### How it works
 
 ```
                           ┌───────────────────────────┐
@@ -52,7 +56,7 @@ Standard development setup requires tedious, error-prone manual labor: creating 
 │ • FastAPI Async Engine  │                               │ • Vite + React + TS     │
 │ • SQLAlchemy 2.0 Async  │                               │ • Tailwind CSS v4 Engine│
 │ • aiosqlite Integration │                               │ • Lucide Icons + Router │
-│ • Auto Schema Migrations│                               ├─────────────────────────┤
+│ • Auto Schema Creation  │                               ├─────────────────────────┤
 │ • (Optional) Argon2/JWT │                               │ [-app: Mobile Client]   │
 └────────────┬────────────┘                               │ • Expo Managed Workflow │
              │                                            │ • Native TypeScript     │
@@ -72,43 +76,42 @@ Standard development setup requires tedious, error-prone manual labor: creating 
 
 ---
 
-## 🌟 Key Features & Engineering Decisions
+## 🌟 Key features and engineering decisions
 
-### 1. Cross-Runtime Environment Orchestration
+### 1. Cross-platform environment setup
 
-- **Dual Runtime Management:** Orchestrates Node.js/npm and Python `venv` lifecycles simultaneously. Detects host architecture (macOS, Linux, Windows) to dynamically resolve binary execution paths (`Scripts/python.exe` vs. `bin/python`).
-- **Environment Inheritance:** Configures subprocesses to inherit unified system environment variables, bypassing shell isolation boundaries and cross-platform path mismatches.
+- **Two runtimes, one run:** manages the Node.js and Python lifecycles together. It creates the `.venv`, installs both dependency sets, and resolves the interpreter path for the host OS (`Scripts/python.exe` on Windows, `bin/python` on macOS and Linux).
+- **Shared environment:** child processes inherit the parent environment, so installs and servers see the same variables and `PATH` as your shell.
 
-### 2. High-Performance Asynchronous Python Backend
+### 2. Async FastAPI backend
 
-- **SQLAlchemy 2.0 + `aiosqlite`:** Avoids blocking thread pools by configuring native asynchronous connections for local SQLite databases.
-- **Async Thread Safety:** Injects appropriate thread boundary configurations (`check_same_thread=False`) to guarantee stability during concurrent asynchronous API calls.
-- **Automated Lifecycle Migration:** Utilizes FastAPI's `lifespan` context manager to automatically provision database schemas on startup without requiring manual migration commands.
+- **SQLAlchemy 2.0 with `aiosqlite`:** database calls go through an async driver, so they do not block the event loop.
+- **Thread-safe SQLite connections:** `check_same_thread=False` is set on the connection so it works across threads under concurrent requests.
+- **Schema creation on startup:** FastAPI's `lifespan` handler creates the tables when the app boots, so there is no setup step before the first request. This is schema creation, not versioned migrations. Add Alembic when you need those.
 
-### 3. Client Adaptability (Web & Mobile)
+### 3. Web or mobile client
 
-- **Vite Web Client (Default):** Generates a React 18 TypeScript application wired with the latest Tailwind CSS v4 engine (via `@tailwindcss/vite` without legacy PostCSS overhead) and Lucide icons.
-- **Expo Mobile Client (`-app`):** Generates a clean Expo Managed React Native application with TypeScript and native icon bridges ready for Android/iOS emulation.
+- **Vite web client (default):** React 18 + TypeScript with Tailwind CSS v4 through `@tailwindcss/vite`, so there is no PostCSS config. Lucide icons and a router are included.
+- **Expo mobile client (`-app`):** an Expo managed-workflow React Native app in TypeScript with Lucide icons, ready for the Android and iOS simulators.
 
-### 4. Optional Production-Grade Authentication Layer (`-auth`)
+### 4. Optional authentication (`-auth`)
 
-Passing `-auth` injects a full security baseline without third-party boilerplate:
+- **Argon2id hashing** with `argon2-cffi`, a memory-hard algorithm that resists brute-force attacks.
+- **JWT sessions:** signed HS256 tokens with configurable expiry and secret.
+- **Pydantic validation:** `UserCreate` and `UserLogin` schemas, with email checks through `EmailStr`.
+- **Route protection:** a reusable `get_current_user` dependency guards authenticated routes such as the profile endpoint.
+- **Ready to use:** adds a `User` model and `/auth` routes for signup, login and profile.
 
-- **Argon2id Password Hashing:** Uses `argon2-cffi` for memory-hard, brute-force resistant password security.
-- **Stateless JWT Tokens:** Encodes standard HS256 authentication payloads with configurable expiration and secret injection.
-- **Strict Pydantic Validation:** Type validation on incoming auth payloads (`UserCreate`, `UserLogin`) with automated email format checks via `EmailStr`.
-- **Dependency Injection Guard:** Includes reusable `get_current_user` FastAPI security dependencies protecting authenticated profile routes.
+### 5. One process, clean shutdown
 
-### 5. Unified Lifecycle Process Management
-
-- Eliminates manual terminal switching. Upon completing scaffolding, `pro-setup` spawns both dev servers concurrently and streams stdout/stderr directly.
-- Listens for process signals (`SIGINT`, `SIGTERM`) to trigger clean tree termination, preventing orphan zombie processes from binding to ports `8000` or `5173`.
+- **Single terminal:** once scaffolding completes, Uvicorn (8000) and Vite (5173) or Metro (8081) start together, and their stdout and stderr stream to the same window.
+- **Signal handling:** `SIGINT` and `SIGTERM` terminate the whole process tree, so no orphaned servers are left holding your ports.
 
 ---
 
-## 📂 Generated Workspace Topology
+## 📂 Generated workspace
 
-### Web Scaffold (Default)
+### Web scaffold (default)
 
 ```text
 my-project/
@@ -136,7 +139,7 @@ my-project/
     └── tsconfig.json
 ```
 
-### Mobile Scaffold (`-app`)
+### Mobile scaffold (`-app`)
 
 ```text
 my-project/
@@ -150,50 +153,42 @@ my-project/
 
 ---
 
-## 🛠️ CLI Reference
+## 🛠️ CLI reference
 
 | Flag      | Parameter | Description                                                                      |
 | :-------- | :-------- | :------------------------------------------------------------------------------- |
 | `default` | _(none)_  | Scaffolds FastAPI backend + React Vite frontend with Tailwind v4. Launches both. |
-| `-auth`   | `--auth`  | Injects Argon2id, PyJWT, User models, Auth schemas, utils, and `/auth` routes.   |
-| `-app`    | `--app`   | Swaps Vite web frontend for an Expo React Native mobile project in `mobile/`.    |
+| `-auth`   | `--auth`  | Adds Argon2id, PyJWT, User models, auth schemas, utils, and `/auth` routes.      |
+| `-app`    | `--app`   | Swaps the Vite web frontend for an Expo React Native project in `mobile/`.       |
 
 ---
 
-## 💻 Local Development & Extension
+## 💻 Local development and extension
 
-If you want to clone this repository and customize the templates for your personal stack:
+To customize the templates for your own stack:
 
 ```bash
-# 1. Clone repository
+# 1. Clone the repository
 git clone https://github.com/Sandee004/pro-setup.git
 cd pro-setup
 
-# 2. Register binary locally
+# 2. Link the binary locally
 npm link
 
-# 3. Test your modified setup anywhere on your machine
+# 3. Try your changes anywhere on your machine
 mkdir ~/test-scaffold && cd ~/test-scaffold
 pro-setup -auth
 ```
 
-### Customizing Templates
+### Customizing templates
 
-Templates are cleanly separated from process execution:
+Templates are kept separate from process execution:
 
-- `templates.js`: Contains all file contents, source code templates, and configuration objects.
-- `index.js`: Contains CLI flag parsing, directory generation, dependency installation, and server spawn orchestration.
+- `templates.js`: all file contents, source templates and configuration objects.
+- `index.js`: CLI flag parsing, directory generation, dependency installation, and server spawn orchestration.
 
 ---
 
 ## 📜 License
 
 This project is open-source and available under the [MIT License](LICENSE).
-
-[![Node.js](https://img.shields.io/badge/Node.js-20+-68a063?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-18+-61dafb?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
-[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-v4-38bdf8?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![Expo](https://img.shields.io/badge/Expo-SDK--51+-000020?style=flat-square&logo=expo&logoColor=white)](https://expo.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
