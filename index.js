@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -28,6 +28,11 @@ const {
 const args = process.argv.slice(2);
 const withAuth = args.includes("-auth") || args.includes("--auth");
 const isApp = args.includes("-app") || args.includes("--app");
+const isStartOnly =
+  args.includes("start") ||
+  args.includes("dev") ||
+  args.includes("-start") ||
+  args.includes("--start");
 
 // ==========================================
 // 2. RUNTIME HELPERS
@@ -77,6 +82,26 @@ function ensureFile(filePath, content = "") {
 // 3. SERVER RUNNER
 // ==========================================
 
+function freePort(port) {
+  try {
+    if (isWin) {
+      const output = execSync(`netstat -ano | findstr :${port}`, {
+        encoding: "utf8",
+      });
+      const lines = output.trim().split("\n");
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && pid !== "0") {
+          execSync(`taskkill /F /PID ${pid} 2>nul`);
+        }
+      }
+    } else {
+      execSync(`lsof -ti :${port} | xargs kill -9 2>/dev/null || true`);
+    }
+  } catch (_) {}
+}
+
 function startDevelopmentServers(
   rootDir,
   backendDir,
@@ -84,6 +109,8 @@ function startDevelopmentServers(
   venvDir,
   isAppMode,
 ) {
+  freePort(8000);
+
   console.log("\n========================================================");
   console.log("🚀 Starting Development Servers...");
   console.log(
@@ -218,10 +245,14 @@ async function setup() {
       clientDir = path.join(rootDir, "mobile");
       if (!fs.existsSync(clientDir)) {
         await runCommand(
-          `${npxBin} -y create-expo-app@latest mobile --template blank-typescript --no-install`,
+          `${npxBin} -y create-expo-app@latest mobile --template blank-typescript --no-install --yes`,
           "Scaffolding Expo (React Native TypeScript) project",
           rootDir,
         );
+
+        if (!fs.existsSync(clientDir)) {
+          throw new Error("Mobile directory was not created during scaffolding.");
+        }
 
         await runCommand(
           `${npmBin} install`,
@@ -251,10 +282,16 @@ async function setup() {
       clientDir = path.join(rootDir, "frontend");
       if (!fs.existsSync(clientDir)) {
         await runCommand(
-          `${npmBin} create vite@latest frontend -- --template react-ts --no-immediate`,
+          `${npxBin} -y create-vite@9.3.1 frontend --template react-ts --eslint --no-immediate`,
           "Scaffolding React (TS) project via Vite",
           rootDir,
         );
+
+        if (!fs.existsSync(clientDir)) {
+          throw new Error(
+            "Frontend directory was not created during scaffolding.",
+          );
+        }
 
         await runCommand(
           `${npmBin} install`,

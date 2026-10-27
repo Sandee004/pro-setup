@@ -16,6 +16,7 @@ dist/
 
 const VSCODE_SETTINGS_CONTENT = JSON.stringify(
   {
+    "python.defaultInterpreterPath": "\${workspaceFolder}/.venv/bin/python",
     "python.analysis.extraPaths": ["./backend"],
   },
   null,
@@ -92,6 +93,11 @@ function getConfigPyContent(isApp = false) {
 }
 
 function getMainPyContent(withAuth, isApp = false) {
+  const authImport = withAuth ? "from routers import auth\n" : "";
+  const authRouter = withAuth
+    ? 'app.include_router(auth.router, prefix="/auth", tags=["auth"])'
+    : "# app.include_router(auth.router)";
+
   if (isApp) {
     return `import os
 from contextlib import asynccontextmanager
@@ -102,7 +108,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import AsyncSessionLocal, Base, engine
 import models
-\${withAuth ? "from routers import auth\\n" : ""}load_dotenv()
+${authImport}load_dotenv()
 
 
 @asynccontextmanager
@@ -144,7 +150,7 @@ app.add_middleware(
 )
 
 # Mount API Routers
-\${withAuth ? 'app.include_router(auth.router, prefix="/auth", tags=["auth"])' : "# app.include_router(auth.router)"}
+${authRouter}
 
 
 @app.get("/health", tags=["system"])
@@ -167,7 +173,7 @@ from fastapi.staticfiles import StaticFiles
 from config import DIST_DIR, build_frontend
 from database import AsyncSessionLocal, Base, engine
 import models
-\${withAuth ? "from routers import auth\\n" : ""}load_dotenv()
+${authImport}load_dotenv()
 
 # Build frontend automatically if outdated and not in production deploy override
 if os.getenv("RENDER", "false").lower() != "true":
@@ -211,7 +217,7 @@ app.add_middleware(
 )
 
 # Mount API Routers
-\${withAuth ? 'app.include_router(auth.router, prefix="/auth", tags=["auth"])' : "# app.include_router(auth.router)"}
+${authRouter}
 
 
 @app.get("/health", tags=["system"])
@@ -261,7 +267,7 @@ const DATABASE_CONTENT = `import os
 from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 BACKEND_DIR = Path(__file__).resolve().parent
 if (BACKEND_DIR / ".env").exists():
@@ -292,7 +298,8 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
 )
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    pass
 
 
 async def get_db():
@@ -305,17 +312,18 @@ async def get_db():
 // ==========================================
 
 const MODELS_AUTH_CONTENT = `import uuid
-from sqlalchemy import Column, String
+from sqlalchemy import String
+from sqlalchemy.orm import Mapped, mapped_column
 from database import Base
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    username = Column(String, unique=True, index=True, nullable=False)
-    email = Column(String, unique=True, index=True, nullable=False)
-    password = Column(String, nullable=False)
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    username: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
+    password: Mapped[str] = mapped_column(String, nullable=False)
 `;
 
 const SCHEMAS_AUTH_CONTENT = `from pydantic import BaseModel, EmailStr
@@ -467,8 +475,8 @@ async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(new_user)
 
-    token = create_access_token(user_id=new_user.id)
-    return TokenResponse(access_token=token, user=new_user)
+    token = create_access_token(user_id=str(new_user.id))
+    return TokenResponse(access_token=token, user=UserResponse.model_validate(new_user))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -482,8 +490,8 @@ async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
             detail="Invalid email or password",
         )
 
-    token = create_access_token(user_id=user.id)
-    return TokenResponse(access_token=token, user=user)
+    token = create_access_token(user_id=str(user.id))
+    return TokenResponse(access_token=token, user=UserResponse.model_validate(user))
 
 
 @router.get("/profile", response_model=UserResponse)
