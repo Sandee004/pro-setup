@@ -251,7 +251,7 @@ async function setup() {
       clientDir = path.join(rootDir, "frontend");
       if (!fs.existsSync(clientDir)) {
         await runCommand(
-          `${npmBin} create vite@latest frontend -- --template react-ts`,
+          `${npmBin} create vite@latest frontend -- --template react-ts --no-immediate`,
           "Scaffolding React (TS) project via Vite",
           rootDir,
         );
