@@ -94,6 +94,33 @@ function removeDir(dirPath) {
   }
 }
 
+function removeFile(filePath) {
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (_) {
+      try {
+        if (isWin) {
+          execSync(`del /f /q "${filePath}"`, { stdio: "ignore" });
+        } else {
+          execSync(`rm -f "${filePath}"`, { stdio: "ignore" });
+        }
+      } catch (_) {}
+    }
+  }
+}
+
+function cleanScaffoldArtifacts(targetDir, isSubdir = true) {
+  if (!fs.existsSync(targetDir)) return;
+  if (isSubdir) {
+    removeDir(path.join(targetDir, ".git"));
+  }
+  removeDir(path.join(targetDir, ".claude"));
+  removeDir(path.join(targetDir, "claude"));
+  removeFile(path.join(targetDir, "AGENTS.md"));
+  removeFile(path.join(targetDir, "agents.md"));
+}
+
 // ==========================================
 // 3. SERVER RUNNER
 // ==========================================
@@ -270,8 +297,8 @@ async function setup() {
           throw new Error("Mobile directory was not created during scaffolding.");
         }
 
-        // Remove git repository automatically initialized by create-expo-app
-        removeDir(path.join(clientDir, ".git"));
+        // Remove git repo and unwanted AI agent files created by create-expo-app
+        cleanScaffoldArtifacts(clientDir);
 
         await runCommand(
           `${npmBin} install`,
@@ -298,7 +325,8 @@ async function setup() {
         );
       }
 
-      removeDir(path.join(clientDir, ".git"));
+      cleanScaffoldArtifacts(clientDir);
+      cleanScaffoldArtifacts(rootDir, false);
     } else {
       clientDir = path.join(rootDir, "frontend");
       if (!fs.existsSync(clientDir)) {
@@ -314,7 +342,7 @@ async function setup() {
           );
         }
 
-        removeDir(path.join(clientDir, ".git"));
+        cleanScaffoldArtifacts(clientDir);
 
         await runCommand(
           `${npmBin} install`,
@@ -323,7 +351,8 @@ async function setup() {
         );
       }
 
-      removeDir(path.join(clientDir, ".git"));
+      cleanScaffoldArtifacts(clientDir);
+      cleanScaffoldArtifacts(rootDir, false);
 
       await runCommand(
         `${npmBin} install react-router-dom lucide-react`,
