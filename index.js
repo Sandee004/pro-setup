@@ -78,6 +78,22 @@ function ensureFile(filePath, content = "") {
   }
 }
 
+function removeDir(dirPath) {
+  if (fs.existsSync(dirPath)) {
+    try {
+      fs.rmSync(dirPath, { recursive: true, force: true });
+    } catch (_) {
+      try {
+        if (isWin) {
+          execSync(`rmdir /s /q "${dirPath}"`, { stdio: "ignore" });
+        } else {
+          execSync(`rm -rf "${dirPath}"`, { stdio: "ignore" });
+        }
+      } catch (_) {}
+    }
+  }
+}
+
 // ==========================================
 // 3. SERVER RUNNER
 // ==========================================
@@ -254,6 +270,9 @@ async function setup() {
           throw new Error("Mobile directory was not created during scaffolding.");
         }
 
+        // Remove git repository automatically initialized by create-expo-app
+        removeDir(path.join(clientDir, ".git"));
+
         await runCommand(
           `${npmBin} install`,
           "Installing Expo base dependencies via npm",
@@ -278,6 +297,8 @@ async function setup() {
           "utf8",
         );
       }
+
+      removeDir(path.join(clientDir, ".git"));
     } else {
       clientDir = path.join(rootDir, "frontend");
       if (!fs.existsSync(clientDir)) {
@@ -293,12 +314,16 @@ async function setup() {
           );
         }
 
+        removeDir(path.join(clientDir, ".git"));
+
         await runCommand(
           `${npmBin} install`,
           "Installing base frontend dependencies via npm",
           clientDir,
         );
       }
+
+      removeDir(path.join(clientDir, ".git"));
 
       await runCommand(
         `${npmBin} install react-router-dom lucide-react`,
